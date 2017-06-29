@@ -1,0 +1,13 @@
+---
+title: "ReadMe"
+author: "Richard Blankenhorn"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objective
+
+The goal of this analysis is to provide evidence in favor of or against the argument that the NATO bombing campaign caused a large number of individuals to flee their homes and country. The data sets used in this analysis were obtained from the HRDAG website at https://hrdag.org/kosovo-data/. The data consists of several migration data sets along, NATO airstrike activity, KLA activity and pcodes for the various municipalities. 
