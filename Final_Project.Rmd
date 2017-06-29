@@ -1,0 +1,634 @@
+---
+title: "Kosovo Data Analysis"
+author: "Richard Blankenhorn"
+date: "5/1/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1: Objective and Introduction to the Data
+
+The objective of this analysis is to provide evidence for or against the argument that the NATO bombings and NATO involvement in the Kosovo conflict caused an increase in the number of individuals fleeing their homes and crossing the border. This analysis consists of several data sets from the HRDAT site which includes five migration data sets, a NATO airstrike data set and a Kosovo Liberation Army (KLA) activity data set. With the migration data sets, the variables of interest include the number of individuals being reported or interviewed, the date they crossed the border and the municipality they are from. With regard to the airstrikes and KLA activity data sets, the variables of interest are the number of strikes, attacks or casualties, the date of these events and the municipalities impacted for an event.
+
+## 2: Exploratory Analysis
+
+We begin by looking at the different migration data sets through frequency plots. The first relates to the Morina Border data set. This data set contains 19,126 records of which two observations were dropped since there is no date listed when crossing the border. This data set runs from March 28th of 1999 through May 28th of 1999 and contains the border ID, pcode (village code), date crossing the border and the number of people in the party. The border ID variable was dropped along with the pcode variable after a new *muni* variable was created to show the municipality from which the refugees fled. There were also a number of missing values for the pcode and these entries received a value of 0 for the *muni* variable. The distribution of the border crossings were plotted by the date of the migration. As can be seen by the Morina Border plot on the following page, there is a surge in migrations from late March through early to mid April. This happens again in late April and early to mid May but the trend is a steady decline. 
+
+We also look at the NATO airstrike activity and the KLA activity. The NATO bombing data set contains information reported to individual airstrikes and there are 364 of them in total. These airstrikes only occur in Kosovo and the data set includes the bombing date, the municipality impacted and a description of the bombing. The KLA activity date set references the Kosovo Liberation Army activity maintained by the Kosovo investigation team. Each record in this data set represents an instance of either Yugoslav government casualties due to confrontation between the KLA and Yugoslav authorities or an exchange of fire between the Yugoslav forces and the KLA. The variables in this data set include the event date, type of event (battle or casualty), the municipality impacted and the number of such events. The variable *details* was dropped and the data was split in to KLA Battles and KLA Casualties. In addition, there were no missing value for these data sets.
+
+The NATO airstrikes show someowhat of a different trend in that the majority of the bomings occur after mid May. There appears to be an inverse relationship between the number of individuals migrating and the number of airstrikes as time goes on. On the other hand, the KLA activity plot shows more activity in the months of late March and April. Here, there are two plots, one showing the number of casualties and another showing the number of conflicts or battles. Apart from a dramatic spike in battles and casualties in June, the majority of the battles appear to occur in late March and through April. To break down the impact of the airstrikes, battles and casualties even further, these figures are plotted by each municipality and displayed on page 3. Please note that the top 10 municipalities are reflected as these municipalities account for approximately 75% of the migrations in this data set. Also, the figures for airstrikes, battles and casualties are divisible by 500 (100 for KLA Casualties). This was done in order to reflect these events on the same plot as the migrations.
+
+``` {r echo=FALSE,warning=FALSE,message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(scales)
+library(grid)
+library(pander)
+library(leaps)
+library(glmnet)
+library(gam)
+
+# Set Directories & Load Data
+directory1 <- "/Users/richardblankenhorn/workspace/Applied_StatsII/Final_Project/Kosovo_Migration/migration_data"
+directory2 <- "/Users/richardblankenhorn/workspace/Applied_StatsII/Final_Project/Kosovo_Migration/other_data"
+
+setwd(directory1)
+MBorder <- read.csv('kosovo-morina-border.csv')
+Alt_Cnts_Border <- read.csv('kosovo-alt_cnts-border.csv')
+IPLS_List <- read.csv('kosovo-ipls-list.csv')
+IPLS_Int <- read.csv("kosovo-ipls-int.csv")
+PHR_Transit <- read.csv("kosovo-phr-transit.csv")
+HRW_Transit <- read.csv("kosovo-hrw-transit.csv")
+
+setwd(directory2)
+AirStrike <- read.delim("kosovo-nato_bombing_data.csv", sep = "\t")
+KLA <- read.csv("kosovo-kla_activity.csv")
+
+# Convert -1000 or -1 to 0 for missing and add muni code values
+MBorder$pcode <- ifelse(MBorder$pcode == -1000, as.character(0), as.character(MBorder$pcode))
+MBorder$muni <- ifelse(MBorder$pcode == "0","0",substr(MBorder$pcode, 1, nchar(MBorder$pcode)-3))
+
+# Remove last 2 rows for MBorder (NAs in exdate)
+MBorder <- MBorder[-c(19125,19126),]
+
+# Remove ID variable
+MBorder$bord_id <- NULL
+AirStrike$details <- NULL
+
+# Convert exdate to a date
+MBorder$exdate <- as.character(MBorder$exdate)
+MBorder$exdate <- as.Date(MBorder$exdate, format = '%d%b%y')
+AirStrike$bdate <- as.character(AirStrike$bdate)
+AirStrike$bdate <- as.Date(AirStrike$bdate, format = '%d%b%y')
+#AirStrike$bdate <- format(AirStrike$bdate, "%m/%d")
+KLA$kdate <- as.character(KLA$kdate)
+KLA$kdate <- as.Date(KLA$kdate, format = '%d%b%y')
+
+# Create KLA Battle & Casualty Data Sets
+KLA_Battle <- subset(KLA, type == "b")
+KLA_Casualty <- subset(KLA, type == "k")
+
+KLA_Battle$type <- NULL
+KLA_Casualty$type <- NULL
+
+# Create a summed data set of numpers by date crossing border
+MBorder_Sum <- aggregate(numpers ~ exdate, data = MBorder, FUN = sum)
+AirStrike_Sum <- AirStrike_Sum <- data.frame(table(AirStrike$bdate))
+colnames(AirStrike_Sum) <- c("exdate","strikes")
+KLA_Battle_Sum <- aggregate(count ~ kdate, data = KLA_Battle, FUN = sum)
+colnames(KLA_Battle_Sum) <- c("exdate","battle_count")
+KLA_Casualty_Sum <- aggregate(count ~ kdate, data = KLA_Casualty, FUN = sum)
+colnames(KLA_Casualty_Sum) <- c("exdate","casualty_count")
+
+```
+
+\pagebreak
+
+``` {r echo=FALSE, fig.height=10}
+
+# Plots
+
+morina_plot <- ggplot(MBorder_Sum, aes(x = exdate, y = numpers)) + geom_bar(stat = 'identity') + labs(x = "Date Crossing Border",y="People Crossing Border") + ggtitle("Morina Border Data")
+
+airstrike_plot <- ggplot(AirStrike_Sum, aes(x = as.Date(exdate), y = strikes)) + geom_bar(stat = 'identity') + labs(x = "Date of Airstrikes", y = "Number of Airstrikes") + ggtitle("NATO Airstrike Data")
+
+klaB_plot <- ggplot(KLA_Battle_Sum, aes(x = exdate, y = battle_count)) + geom_bar(stat='identity') + labs(x = "Date of Battles",y = "Number of Battles") + 
+  ggtitle("Number of Battles by Date")
+
+klaC_plot <- ggplot(KLA_Casualty_Sum, aes(x= exdate, y=casualty_count)) + geom_bar(stat = 'identity') + labs(x = "Date of Casualties",y = "Number of Casualties") + 
+  ggtitle("Number of Casualties by Date")
+
+grid.arrange(morina_plot,airstrike_plot,klaB_plot, klaC_plot, ncol = 1)
+```
+
+\pagebreak
+
+\begin{center}
+Migrations = Blue, Airstrike = Red, Battle = Green, Casualties = Purple
+\end{center}
+
+``` {r echo=FALSE, fig.height=12, fig.width=10}
+# Determine the Top Municipalities for Migration
+muni_perc <- rep(0,29)
+
+for (i in 1:29) {
+  k <- subset(MBorder, muni == as.character(i))
+  muni_perc[i] <- sum(k$numpers) / sum(MBorder$numpers)
+}
+
+muni.frame <- data.frame(Muni=1:29, Perc=muni_perc)
+muni.frame <- muni.frame[order(muni.frame$Perc, decreasing = T),]
+muni.frame$Perc <- percent(muni.frame$Perc)
+top_10 <- muni.frame[1:12,]
+top_10_m <- top_10$Muni
+
+# Subsets and Plots by Municipality
+mborder_muni_list <- list()
+idx <- 1
+
+for (i in top_10_m){
+  mbord_sub <- subset(MBorder, muni == as.character(i))
+  air_sub <- subset(AirStrike, municipality == as.character(i))
+  air_sub2 <- data.frame(table(air_sub$bdate))
+  colnames(air_sub2) <- c("exdate","strikes")
+  air_sub2$strikes <- air_sub2$strikes * 500
+  klaB_sub <- subset(KLA_Battle, mcode == as.character(i))
+  klaB_sub$count <- klaB_sub$count * 500
+  klaC_sub <- subset(KLA_Casualty, mcode = as.character(i))
+  klaC_sub$count <- klaC_sub$count * 100
+  
+  mborder_muni_list[[idx]] <- ggplot() + geom_bar(data = mbord_sub, aes(x = exdate, y = numpers), fill = 'blue', stat = 'identity') + geom_bar(data = air_sub2, aes(x = as.Date(exdate), y = strikes), fill = 'red', alpha = 0.3, stat = 'identity') + geom_bar(data = klaB_sub, aes(x = kdate, y = count), fill = 'green', stat = 'identity', alpha = 0.3) + geom_bar(data = klaC_sub, aes(x = kdate, y = count), fill = 'purple', stat = 'identity', alpha = 0.3) + labs(x = "Date", y = "Crossing") + ggtitle(paste("Muni",i,"Data", sep = ' ')) + theme(plot.title = element_text(size = 10, face = "bold"))
+  
+  idx <- idx+1
+}
+
+# Display the plots
+grid.arrange(mborder_muni_list[[1]],mborder_muni_list[[2]],mborder_muni_list[[3]],mborder_muni_list[[4]], mborder_muni_list[[5]],mborder_muni_list[[6]],mborder_muni_list[[7]],mborder_muni_list[[8]],mborder_muni_list[[9]], mborder_muni_list[[10]], mborder_muni_list[[11]], mborder_muni_list[[12]],ncol = 3,top = textGrob("Number of Crossings Compared To Airstrikes, Battles and Casualties (By Municipality)", gp=gpar(fontsize=17)))
+```
+
+Looking at these plots, there appears to be more KLA activity around or before migrations compared to NATO activity. In fact, for the majority of these plots, most of the NATO activity is occuring after the report of migrations. We will now look at the other migration data sets to see if the same discoveries are present.
+
+\pagebreak
+
+The next migration data set is the Alternative Border Counts data. Starting on March 27th of 1999, the UN High Commission for Refugees issued daily reports for individuals crossing the border. In addition, an Albanian government group began reporting similar figures on April 13th of 1999. The variables included in this data set are the date crossing the border, the number of people crossing reported by UNHCR and the number of people crossing reported by EMG. These figures do not always match each other and there are some missing values. The rows in which data is missing for both UNHCR and EMG were removed. If a row contained numbers from UNHCR but not for EMG, the former number was kept and vice versa. If there were numbers reported from both groups, the average was taken. Lastly, the number of airstrikes is divisible by 500 and this was done in order to display airstrike activity on this plot (a value of 500 = 1 airstrike).
+
+The below plot appears to show the same results from the Morina Border count data in that the majority of NATO activity occurs after a bulk of the migrations. There is an inverse relationship between the number of people migrating and the number/frequency of NATO airstrikes as time goes on. Additionally, there appears to be more KLA activity prior to and during the migrations. (Migrations in Blue, Other Event in Red)
+
+``` {r echo=FALSE, fig.height=7, fig.width=7}
+# Replace NAs with 0 and remove rows where both uncnt and emgcnt are 0
+Alt_Cnts_Border[is.na(Alt_Cnts_Border)] <- 0
+rows_both_0 <- as.numeric(rownames(Alt_Cnts_Border[Alt_Cnts_Border[,'uncnt'] == 0 & Alt_Cnts_Border[,'emgcnt'] == 0,]))
+
+Alt_Cnts_Border <- Alt_Cnts_Border[-rows_both_0,]
+
+# Create new Count variable to factor in uncnt and emgcnt
+Alt_Cnts_Border$counts <- ifelse(Alt_Cnts_Border$uncnt == 0 & Alt_Cnts_Border$emgcnt != 0, Alt_Cnts_Border$emgcnt, ifelse(Alt_Cnts_Border$uncnt != 0 & Alt_Cnts_Border$emgcnt == 0, Alt_Cnts_Border$uncnt, round((Alt_Cnts_Border$uncnt + Alt_Cnts_Border$emgcnt)/2)))
+
+# Convert exdate to date time
+Alt_Cnts_Border$exdate <- as.Date(Alt_Cnts_Border$exdate, format = '%d%b%Y')
+
+# Remove uncnt, emgcnt
+Alt_Cnts_Border$uncnt <- NULL
+Alt_Cnts_Border$emgcnt <- NULL
+
+# Add muni variable (all will be zeros)
+Alt_Cnts_Border$muni <- rep(0, nrow(Alt_Cnts_Border))
+
+# Change column names
+colnames(Alt_Cnts_Border) <- c("exdate", "numpers", "muni")
+
+# Create Alt Count Sum
+Alt_Cnts_Sum <- aggregate(numpers ~ exdate, data = Alt_Cnts_Border, FUN = sum)
+
+# Create alternat airstrike sum dsn and for the KLA sets
+AirStrike_Sum2 <- AirStrike_Sum
+AirStrike_Sum2$strikes <- AirStrike_Sum2$strikes * 500
+
+KLA_Battle_Sum2 <- KLA_Battle_Sum
+KLA_Battle_Sum2$battle_count <- KLA_Battle_Sum2$battle_count * 500
+
+KLA_Casualty_Sum2 <- KLA_Casualty_Sum
+KLA_Casualty_Sum2$casualty_count <- KLA_Casualty_Sum2$casualty_count * 500
+
+# Display plot of Alt Count Sum, Airstrikes
+alt_cnts_plot <- ggplot() + geom_bar(data = Alt_Cnts_Sum, aes(x = exdate, y = numpers), stat = 'identity', fill = 'blue') + geom_bar(data = AirStrike_Sum2, aes(x = as.Date(exdate), y = strikes), fill = 'red', alpha = 0.7, stat = 'identity') + labs(x = "Date", y = "Migrations") + ggtitle("Alt Counts Data and AirStrikes")
+
+# Display plot of Alt Count Sum and KLA Activity Battles
+alt_cnts_plot2 <- ggplot() + geom_bar(data = Alt_Cnts_Sum, aes(x = exdate, y = numpers), stat = 'identity', fill = 'blue') + geom_bar(data = KLA_Battle_Sum2, aes(x = as.Date(exdate), y = battle_count), fill = 'red', alpha = 0.7, stat = 'identity') + labs(x = "Date", y = "Migrations") + ggtitle("Alt Counts Data and Battles")
+
+# Display plot of Alt Count Sum and KLA Activity Casualties
+alt_cnts_plot3 <- ggplot() + geom_bar(data = Alt_Cnts_Sum, aes(x = exdate, y = numpers), stat = 'identity', fill = 'blue') + geom_bar(data = KLA_Casualty_Sum2, aes(x = as.Date(exdate), y = casualty_count), fill = 'red', alpha = 0.7, stat = 'identity') + labs(x = "Date", y = "Migrations") + ggtitle("Alt Counts Data and Casualties")
+
+grid.arrange(alt_cnts_plot, alt_cnts_plot2, alt_cnts_plot3, ncol = 1)
+```
+
+\pagebreak
+
+We will now go over the remainder of the migration data sets and will just provide summation plots showing the number of migrations and the dates of the migrations. The next two data sets come from IPLS/AAAS Listings and Interviews. For the listings data set, a sample of 1837 Kosovar Albanian families were taken and the information collected included the number of people in the household, the date crossing the border and the code for the village or town where they lived in Kosovo. For the interview data set, a total of 265 Kosovar Albanian households were interviewed and a code for their village or town was recorded along with the date they left their homes, the date crossing the border, the number of people in the group and whether they were interviewed in Bosnia or Albania. The Physicians for Human Rights data set contains records for 671 households that crossed the border into Albania and 509 records for househoulds crossing in to Macedonia. This data set includes the number of people in the interviewed household, their leaving date, the date they crossed the border, where they were interviewed (Albania or Macedonia) and the code of the village or municipality from which they came. Finally, the Human Rights Watch data set consists of 123 people interviewed in Albania. This set includes the number of people in the interviewed household, their leaving date, the date they crossed the border and the code for the municipality from which they came.
+
+``` {r echo=FALSE, fig.height=6}
+# Convert exdate to date time
+IPLS_List$exdate <- as.Date(IPLS_List$exdate, format = '%d%b%Y')
+IPLS_Int$exdate <- as.Date(IPLS_Int$exdate, format = '%d%b%y')
+IPLS_Int$lvdate <- as.Date(IPLS_Int$lvdate, format = '%d%b%y')
+PHR_Transit$exdate <- as.Date(PHR_Transit$exdate, format = '%d%b%Y')
+PHR_Transit$lvdate <- as.Date(PHR_Transit$lvdate, format = '%d%b%Y')
+HRW_Transit$exdate <- as.Date(HRW_Transit$exdate, format = '%d%b%y')
+HRW_Transit$lvdate <- as.Date(HRW_Transit$lvdate, format = '%d%b%y')
+
+# Change NAs in mcode to 0 (PHR_Transit)
+PHR_Transit[is.na(PHR_Transit$mcode),][4] <- 0
+
+# Create muni variable
+IPLS_List$pcode <- ifelse(IPLS_List$pcode == -1, as.character(0), as.character(IPLS_List$pcode))
+IPLS_List$muni <- ifelse(IPLS_List$pcode == "0","0",substr(IPLS_List$pcode, 1, nchar(IPLS_List$pcode)-3))
+
+IPLS_Int$pcode <- ifelse(IPLS_Int$pcode == -1, as.character(0), as.character(IPLS_Int$pcode))
+IPLS_Int$muni <- ifelse(IPLS_Int$pcode == "0","0",substr(IPLS_Int$pcode, 1, nchar(IPLS_Int$pcode)-3))
+
+# Check for missing values
+numpers_miss <- as.numeric(rownames(IPLS_List[is.na(IPLS_List$numpers),]))
+IPLS_List <- IPLS_List[-numpers_miss,]
+
+exdate_miss <- as.numeric(rownames(IPLS_List[is.na(IPLS_List$exdate),]))
+IPLS_List <- IPLS_List[-exdate_miss,]
+
+# Check for missing data
+# Remove rows where there is no lvdate or exdate
+# If either lvdate or exdate is missing, use other date
+#IPLS_Int[is.na(IPLS_Int$exdate),]
+#IPLS_Int[is.na(IPLS_Int$lvdate),]
+
+both_dates_na <- as.numeric(rownames(IPLS_Int[is.na(IPLS_Int$lvdate) & is.na(IPLS_Int$exdate),]))
+IPLS_Int <- IPLS_Int[-both_dates_na,]
+
+IPLS_Int[is.na(IPLS_Int$exdate),][3] <- IPLS_Int[is.na(IPLS_Int$exdate),][2]
+
+both_dates_na <- as.numeric(rownames(PHR_Transit[is.na(PHR_Transit$lvdate) & is.na(PHR_Transit$exdate),]))
+PHR_Transit <- PHR_Transit[-both_dates_na,]
+
+# Replace numpers NA with median
+PHR_Transit[is.na(PHR_Transit$ngrp),][1] <- median(PHR_Transit$ngrp, na.rm = T)
+
+# Remove ID variable and pcode
+MBorder$pcode <- NULL
+IPLS_List$ipls_id <- NULL
+IPLS_List$pcode <- NULL
+IPLS_Int$pcode <- NULL
+IPLS_Int$lvdate <- NULL
+IPLS_Int$bos <- NULL
+PHR_Transit$lvdate <- NULL
+PHR_Transit$int_loc <- NULL
+HRW_Transit$id <- NULL
+HRW_Transit$lvdate <- NULL
+
+# Change var placement
+IPLS_List <- data.frame(IPLS_List$exdate,IPLS_List$numpers,IPLS_List$muni)
+colnames(IPLS_List) <- c("exdate","numpers","muni")
+
+colnames(IPLS_Int) <- c("exdate","numpers","muni")
+
+PHR_Transit <- data.frame(PHR_Transit$exdate,PHR_Transit$ngrp,PHR_Transit$mcode)
+colnames(PHR_Transit) <- c("exdate","numpers","muni")
+
+HRW_Transit <- data.frame(HRW_Transit$exdate,HRW_Transit$ngrp,HRW_Transit$mcode)
+colnames(HRW_Transit) <- c("exdate","numpers","muni")
+
+# Remove the outlier from 1990
+#which.min(IPLS_Int$exdate) #63
+IPLS_Int <- IPLS_Int[-63,]
+
+# Summed data
+IPLS_Int_Sum <- aggregate(numpers ~ exdate, data = IPLS_Int, FUN = sum)
+IPLS_List_Sum <- aggregate(numpers ~ exdate, data = IPLS_List, FUN = sum)
+PHR_Transit_Sum <- aggregate(numpers ~ exdate, data = PHR_Transit, FUN = sum)
+HRW_Transit_Sum <- aggregate(numpers ~ exdate, data = HRW_Transit, FUN = sum)
+
+# Plots for IPLS Data (do not include data prior to 1999)
+cols <- c("Migrations"="blue", "Bombings"="red")
+
+ipls_plot1 <- ggplot() + geom_bar(data = IPLS_Int_Sum[IPLS_Int_Sum$exdate > "1999-01-01",], aes(x = exdate, y = numpers, fill = "Migrations"), stat = 'identity') + geom_bar(data = AirStrike_Sum, aes(x = as.Date(exdate), y = strikes, fill = "Bombings"), stat = 'identity') + labs(x = "Date", y = "", title = "IPLS Interview") + scale_fill_manual(name = "Events", values = cols) + theme(legend.position=c(1,1), legend.justification=c(1,1))
+
+ipls_plot2 <- ggplot() + geom_bar(data = IPLS_List_Sum[IPLS_List_Sum$exdate > "1999-01-01",], aes(x = exdate, y = numpers, fill = "Migrations"), stat = 'identity') + geom_bar(data = AirStrike_Sum, aes(x = as.Date(exdate), y = strikes * 20, fill = "Bombings"), stat = 'identity') + labs(x = "Date", y = "", title = "IPLS Listing") + scale_fill_manual(name = "Events", values = cols) + theme(legend.position=c(1,1), legend.justification=c(1,1))
+
+phr_plot <- ggplot() + geom_bar(data = PHR_Transit_Sum[PHR_Transit_Sum$exdate > "1999-01-01",], aes(x = exdate, y = numpers, fill = "Migrations"), stat = 'identity') + geom_bar(data = AirStrike_Sum, aes(x = as.Date(exdate), y = strikes * 5, fill = "Bombings"), stat = 'identity') + labs(x = "Date", y = "", title = "PHR Transit") + scale_fill_manual(name = "Events", values = cols) + theme(legend.position=c(1,1), legend.justification=c(1,1))
+
+hrw_plot <- ggplot() + geom_bar(data = HRW_Transit_Sum[HRW_Transit_Sum$exdate > "1999-03-30",], aes(x = exdate, y = numpers, fill = "Migrations"), stat = 'identity') + geom_bar(data = AirStrike_Sum, aes(x = as.Date(exdate), y = strikes * 5, fill = "Bombings"), stat = 'identity') + labs(x = "Date", y = "", title = "HRW Transit") + scale_fill_manual(name = "Events", values = cols) + theme(legend.position=c(0,1), legend.justification=c(0,1))
+
+# Display IPLS plots
+grid.arrange(ipls_plot1, ipls_plot2, ncol = 1)
+
+```
+
+\pagebreak
+
+``` {r echo=FALSE, fig.height = 4}
+
+# Display PHR and HRW Plots
+grid.arrange(phr_plot, hrw_plot, ncol = 1)
+
+# Create the Final Data Set
+# Change some of the column names for data sets
+colnames(AirStrike) <- c("exdate","muni")
+colnames(KLA_Battle) <- c("exdate","muni","battle")
+colnames(KLA_Casualty) <- c("exdate","muni","casualty")
+AirStrike$strike <- 1
+
+# Aggregate By Exdate and Muni
+MBorder_Agg <- aggregate(numpers ~ exdate, data = MBorder, FUN = sum)
+Alt_Cnts_Agg <- aggregate(numpers ~ exdate, data = Alt_Cnts_Border, FUN = sum)
+IPLS_Int_Agg <- aggregate(numpers ~ exdate, data = IPLS_Int, FUN = sum)
+IPLS_List_Agg <- aggregate(numpers ~ exdate, data = IPLS_List, FUN = sum)
+HRW_Transit_Agg <- aggregate(numpers~exdate, data = HRW_Transit, FUN = sum)
+PHR_Transit_Agg <- aggregate(numpers~exdate, data = PHR_Transit, FUN = sum)
+AirStrike_Agg <- aggregate(strike ~ exdate, data = AirStrike, FUN = sum)
+KLA_Battle_Agg <- aggregate(battle ~ exdate, data = KLA_Battle, FUN = sum)
+KLA_Casualty_Agg <- aggregate(casualty ~ exdate, data = KLA_Casualty, FUN = sum)
+
+# Create the final data set
+Final_DSN <- rbind(MBorder_Agg, Alt_Cnts_Agg, IPLS_Int_Agg, IPLS_List_Agg, HRW_Transit_Agg, PHR_Transit_Agg)
+
+t1 <- merge(Final_DSN, AirStrike_Agg, by = c("exdate"), all = T)
+t2 <- merge(t1, KLA_Battle_Agg, by = c("exdate"), all = T)
+Final <- merge(t2, KLA_Casualty_Agg, by = c("exdate"), all = T)
+
+# Set NA values to zero
+Final[is.na(Final)] <- 0
+
+# Plot Migrations over Time
+cols <- c("Migrations"="blue", "Bombings"="red","Battles"="yellow", "Casualties"="light green")
+
+final_plot <- ggplot() + geom_bar(data = Final[Final$exdate > "1999-03-01" & Final$exdate < "1999-07-01",], aes(x = exdate, y = numpers, fill="Migrations"), stat = 'identity') + geom_bar(data = AirStrike_Agg, aes(x = exdate, y = strike * 500, fill="Bombings"), alpha = 0.8, stat = 'identity') + geom_bar(data = KLA_Battle_Agg, aes(x = exdate, y = battle * 500, fill="Battles"), alpha = 0.8, stat = 'identity') + geom_bar(data = KLA_Casualty_Agg, aes(x = exdate, y = casualty * 500, fill = "Casualties"), alpha = 0.8, stat = 'identity') + scale_fill_manual(name="Events", values = cols) + theme(legend.position=c(1,1), legend.justification=c(1,1)) + labs(x = "Date", y = "", title = "Migrations, Bombings and KLA Activity by Date")
+
+```
+
+Apart from the HRW Transit plot, these plots show again that the bulk of the NATO bombing activity comes after the surge in migrations. There still appears to be a negative relationship with migration activity and bombing activity. To pull this all in to perspective, all of the mentioned migration data sets were combined to produce one single data set. The airstrike and KLA activity data sets were then merged with these migration data sets to produce a final data set. Below is a plot showing all of the combined migrations over time. As shown before, overall there appears to be a surge in migrations in late March to early and mid April and these migrations slowed as time went on. This plot also shows the airstrikes occurring over this time period along with the KLA activity. Please note that the plot only includes data points after 03/01/1999 as the activity prior to this date is minimal. In addition, airstrikes are divisible by 500. This was done in order to reflect airstrikes on the plot.
+
+``` {r echo=FALSE, fig.height = 3.2}
+# Display plot of the final data set
+final_plot
+```
+
+\pagebreak
+
+## 3: Model Building
+
+Now that we have our final data set, we can begin to build models to determine if there is a significant relationship between the NATO airstrikes and the migrations in Kosovo or to discover other factors that may contribute to migrations. From the explanatory analysis, there does not appear to be a strong relationship between the NATO involvement and the migrations. Instead, the KLA activity appears to be more influential in the migrations, particularly the reported casualties. To explore the relationships, I will begin with linear regression and then also add some different higher polynomial terms.
+
+
+**A: Multiple Regression & Polynomial Regression**
+
+
+``` {r echo=FALSE}
+# Fit Full Linear Mod and Display Results
+lm.mod1 <- lm(numpers ~ ., data = Final)
+pander(data.frame(summary(lm.mod1)$coef), caption = "Full Linear Model")
+```
+
+After fitting a linear regression model to the full data set, there is not a significant relationship between airstrikes and the number of individuals migrating out of Kosovo. However, as suspected, there appears to be a negative relationship between the number of people migrating and the number of airstrikes due to a negative coefficient of -60.202 for the variable strike. In addition, while the relationship between migrations and battles is not significant, it does appear to be positive due to the coefficient. Now, I will explore the impact of adding some higher order polynomials for airstrikes, casualties and battles individually.
+
+``` {r echo=FALSE}
+# Fit Models
+lm.mod2 <- lm(numpers ~ poly(strike, 2), data = Final)
+lm.mod3 <- lm(numpers ~ poly(battle, 2), data = Final)
+lm.mod4 <- lm(numpers ~ poly(casualty, 2), data = Final)
+
+# Generate Summaries
+lm.mod2.sum <- summary(lm.mod2)
+lm.mod3.sum <- summary(lm.mod3)
+lm.mod4.sum <- summary(lm.mod4)
+
+# Coefs DFs
+coef2 <- data.frame(lm.mod2.sum$coef)
+coef3 <- data.frame(lm.mod3.sum$coef)
+coef4 <- data.frame(lm.mod4.sum$coef)
+
+# Display Results
+pander(coef2, caption = "2nd Degree for Strike")
+pander(coef3, caption = "2nd Degree for Battle")
+pander(coef4, caption = "2nd Degree for Casualty")
+#pander(summary(lm.mod3))
+```
+
+\pagebreak
+
+After adding a 2nd degree polynomials for strike, battle and casualty, there appears to be more significance in the variables strike and battle, but more importantly there is a strong inverse relationship with the number of individuals migrating and airstrikes and battles. As airstrikes or battles increase, we would expect a sharp decrease in the number of individuals migrating. These results make sense in light of the previous plots. We will now incorporate battles and airstrikes in to the same model and review the results.
+
+``` {r echo=FALSE}
+# Model with 2nd Degree terms for strike and battle
+lm.mod5 <- lm(numpers ~ poly(strike, 2) + poly(battle, 2), data = Final)
+pander(data.frame(summary(lm.mod5)$coef), caption = "2nd Degree Terms for Strike & Battle")
+```
+
+Again, the higher order terms are significant and show a negative relationship between the number of airstrikes and battles to the number of migrations. We will now fit additional polynomails along with interaction terms and examine the results.
+
+``` {r echo=FALSE}
+# More Polynomials Models
+lm.mod6 <- lm(numpers ~ poly(strike,5), data = Final)
+lm.mod7 <- lm(numpers ~ poly(battle,5), data = Final)
+lm.mod8 <- lm(numpers ~ poly(strike,5) + poly(battle,5), data = Final)
+
+# Interaction Models
+lm.mod9 <- lm(numpers ~ strike * battle, data = Final)
+lm.mod10 <- lm(numpers ~ strike * casualty, data = Final)
+lm.mod11 <- lm(numpers ~ battle * casualty, data = Final)
+
+# Display Results
+pander(data.frame(summary(lm.mod6)$coef), caption = "5th Degree for Strike")
+pander(data.frame(summary(lm.mod7)$coef), caption = "5th Degree for Battle")
+pander(data.frame(summary(lm.mod8)$coef), caption = "5th Degree for Strike & Battle")
+
+pander(data.frame(summary(lm.mod9)$coef), caption = "Interaction Strike & Battle")
+pander(data.frame(summary(lm.mod10)$coef), caption = "Interaction Strike & Casualty")
+pander(data.frame(summary(lm.mod11)$coef), caption = "Interaction Battle & Casualty")
+```
+
+These results again seem in line with the previous results in that the 2nd degree term is the most significant and reflects a negative relationship between airstrikes/battles with migrations. There also appears to be a significant relationship between battles and airstrikes on migrations. For all of these models, we will now perform 10 fold cross validation to assess the predictive power of these models on the response *numpers*. To begin, the data is mixed up using a random sample of all observations. After performing 10 fold cross validation, the results are listed below. The model that performed the best was model 5, which consisted of the formula (numpers ~ poly(strike, 2) + poly(battle, 2) ). 
+
+``` {r echo=FALSE}
+# Mix Up Data
+set.seed(702)
+mix <- sample(nrow(Final), nrow(Final), replace = F)
+new_Final <- Final[mix,]
+
+# Cross Validation
+start <- 1
+end <- 43
+model.errs <- matrix(NA, 10, 11, dimnames = list(NULL, paste(1:11)))
+
+for (i in 1:10) {
+  train <- new_Final[-c(start:end),]
+  test <- new_Final[start:end, ]
+  
+  mod1 <- lm(numpers ~ ., data = train)
+  mod2 <- lm(numpers ~ poly(strike, 2), data = train)
+  mod3 <- lm(numpers ~ poly(battle, 2), data = train)
+  mod4 <- lm(numpers ~ poly(casualty, 2), data = train)
+  mod5 <- lm(numpers ~ poly(strike, 2) + poly(battle, 2), data = train)
+  mod6 <- lm(numpers ~ poly(strike,5), data = train)
+  mod7 <- lm(numpers ~ poly(battle,5), data = train)
+  mod8 <- lm(numpers ~ poly(strike,5) + poly(battle,5), data = train)
+  mod9 <- lm(numpers ~ strike * battle, data = train)
+  mod10 <- lm(numpers ~ strike * casualty, data = train)
+  mod11 <- lm(numpers ~ battle * casualty, data = train)
+  
+  pred1 <- predict(mod1, newdata = test)
+  pred2 <- predict(mod2, newdata = test)
+  pred3 <- predict(mod3, newdata = test)
+  pred4 <- predict(mod4, newdata = test)
+  pred5 <- predict(mod5, newdata = test)
+  pred6 <- predict(mod6, newdata = test)
+  pred7 <- predict(mod7, newdata = test)
+  pred8 <- predict(mod8, newdata = test)
+  pred9 <- predict(mod9, newdata = test)
+  pred10 <- predict(mod10, newdata = test)
+  pred11 <- predict(mod11, newdata = test)
+  
+  model.errs[i,1] <- mean((pred1 - test$numpers)^2)
+  model.errs[i,2] <- mean((pred2 - test$numpers)^2)
+  model.errs[i,3] <- mean((pred3 - test$numpers)^2)
+  model.errs[i,4] <- mean((pred4 - test$numpers)^2)
+  model.errs[i,5] <- mean((pred5 - test$numpers)^2)
+  model.errs[i,6] <- mean((pred6 - test$numpers)^2)
+  model.errs[i,7] <- mean((pred7 - test$numpers)^2)
+  model.errs[i,8] <- mean((pred8 - test$numpers)^2)
+  model.errs[i,9] <- mean((pred9 - test$numpers)^2)
+  model.errs[i,10] <- mean((pred10 - test$numpers)^2)
+  model.errs[i,11] <- mean((pred11 - test$numpers)^2)
+  
+  if (i < 10) {
+  start <- start + 43
+  end <- end + 43
+  }
+  if (i == 10){
+    start <- start + 44
+    end <- end + 44
+  }
+}
+
+results <- data.frame(mean(model.errs[,1]), mean(model.errs[,2]), mean(model.errs[,3]), mean(model.errs[,4]), mean(model.errs[,5]), mean(model.errs[,6]), mean(model.errs[,7]), mean(model.errs[,8]), mean(model.errs[,9]), mean(model.errs[,10]), mean(model.errs[,11]))
+
+# which.min(results) # Model 5
+
+colnames(results) <- c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5", "Model6", "Model 7", "Model 8", "Model 9", "Model 10", "Model 11")
+
+pander(results, caption = "10 Fold CV MSE Averages by Model")
+
+#anv.t <- anova(lm.mod, lm.mod3)
+#pander(anv.t)
+```
+
+**B: Subset Selection**
+
+To see if we can come up with even better predictions on this data, we will use the best subset selection method to choose a set of variables and also make predictions. Below are the results of the best subset selection using the formula (numpers ~ exdate + poly(strike, 2) + battle + casualty). The best model chosen by BIC was the model with only one predictor, strike^2. As can be seen from the coefficient, there is a negative relationship between airstrikes and the number of migrations. However, this model is not performing as well as the linear regression model. Lastly, 10 fold cross validation was performed for each different model and their average cross validation MSEs are listed below. From this table, the model that includes all 5 variables is performing the best. If we then apply this model to the data, we still see there is a negative relationship between the number of migrations and the number of airstrikes.
+
+``` {r echo=FALSE}
+# Subset Selection
+subset.selection <- regsubsets(numpers ~ exdate + poly(strike,2) + battle + casualty, data = Final)
+
+# Produce Summary
+subset.summary <- summary(subset.selection)
+best.mods <- data.frame(subset.summary$outmat)
+colnames(best.mods) <- c("Exdate","Strike","Strike^2","Battle","Casualty")
+pander(best.mods)
+
+# Determine best mod by BIC
+best <- which.min(subset.summary$bic)
+best.coef <- data.frame(coef(subset.selection, best))
+pander(best.coef, caption = "Coefficients for Best Model (By BIC)")
+
+# Predict function for regsubsets
+pred.subset <- function(object, data, id, ...){
+  form <- as.formula(object$call[[2]])
+  mat <- model.matrix(form, data)
+  coefi <- coef(object, id = id)
+  xvars <- names(coefi)
+  mat[,xvars]%*%coefi
+}
+
+# Cross Validation
+start <- 1
+end <- 43
+sub.errs <- matrix(NA, 10, 5, dimnames = list(NULL, paste(1:5)))
+
+for (k in 1:10) {
+  train <- new_Final[-c(start:end),]
+  test <- new_Final[start:end,]
+  sub.mod <- regsubsets(numpers~exdate+poly(strike,2)+battle+casualty,data=train)
+  for (i in 1:5) {
+    pred <- pred.subset(sub.mod, test, id = i)
+    sub.errs[k,i] <- mean((pred - test$numpers)^2)
+  }
+  if (i < 10) {
+    start <- start + 43
+    end <- end + 43
+  }
+  if (i == 10){
+    start <- start + 44
+    end <- end + 44
+  }
+}
+
+cv.results <- data.frame(mean(sub.errs[,1]),mean(sub.errs[,2]), mean(sub.errs[,3]), mean(sub.errs[,4]), mean(sub.errs[,5]))
+colnames(cv.results) <- c("Model 1","Model 2", "Model 3", "Model 4", "Model 5")
+pander(cv.results, caption = "Average MSE For Each Model")
+
+# New subset selection
+new.best <- data.frame(coef(subset.selection, 5))
+pander(new.best, "Coefficents From Full Model")
+
+```
+
+\pagebreak
+
+**C: Generalized Additive Models**
+
+We will now use generalized additive models to fit the final data set. The first model only includes a smoothing spline for strike, the second model includes smoothing splines for strike and battle and the third model includes smoothing splines for strike, battle and casualty. These three models are initially compared by using ANOVA and the best result appears to be the second model (strike and battle). This is similar to the results obtained using regression above. In addition, cross validation was used to examine the prediction power of these models and the results are listed below. Again, the model with smoothing splines for strike and battle performed best. This indicates that there is a strong non-linear relationship between the airstrikes, battles and the migrations. Even more so, these results show that the relationship between battles and migrations is stronger than the relationship between airstrikes and migrations. 
+
+``` {r echo=FALSE, fig.height=2}
+# Build GAM Models
+gam.mod1 <- gam(numpers ~ s(strike), data = new_Final)
+gam.mod2 <- gam(numpers ~ s(strike) + s(battle), data = new_Final)
+gam.mod3 <- gam(numpers ~ s(strike) + s(battle) + s(casualty), data = new_Final)
+
+# Anova
+aov.t <- anova(gam.mod1, gam.mod2, gam.mod3, test = "F")
+pander(aov.t, caption = "Anova Test")
+
+# Cross Validation
+start <- 1
+end <- 43
+model.errs <- matrix(NA, 10, 3, dimnames = list(NULL, paste(1:3)))
+
+for (i in 1:10) {
+  train <- new_Final[-c(start:end),]
+  test <- new_Final[start:end, ]
+  
+  mod1 <- gam(numpers ~ s(strike,2), data = train)
+  mod2 <- gam(numpers ~ s(strike,2) + s(battle,2), data = train)
+  mod3 <- gam(numpers ~ s(strike,2) + s(battle,2) + s(casualty,2), data = train)
+  
+  pred1 <- predict(mod1, newdata = test)
+  pred2 <- predict(mod2, newdata = test)
+  pred3 <- predict(mod3, newdata = test)
+  
+  model.errs[i,1] <- mean((pred1 - test$numpers)^2)
+  model.errs[i,2] <- mean((pred2 - test$numpers)^2)
+  model.errs[i,3] <- mean((pred3 - test$numpers)^2)
+  
+  if (i < 10) {
+  start <- start + 43
+  end <- end + 43
+  }
+  if (i == 10){
+    start <- start + 44
+    end <- end + 44
+  }
+}
+
+results <- data.frame(mean(model.errs[,1]), mean(model.errs[,2]), mean(model.errs[,3]))
+
+#which.min(results) # Model 2
+
+colnames(results) <- c("Model 1", "Model 2", "Model 3")
+
+pander(results, caption = "10 Fold CV MSE Averages by Model")
+
+# Summaries
+#summary(gam.mod1)
+
+par(mfrow=c(1,3))
+plot(gam.mod1, se = T, col = "blue")
+plot(gam.mod2, se = T, col = "red")
+plot(gam.mod3, se = T, col = "green")
+```
+
+**D: Conclusion**
+
+After fitting various models and reviewing the results, there does appear to be some evidence that NATO was not directly responsible for the surge in migrations in Kosovo. The graphs provided point to a decrease in migrations as airstrikes accelerated. This trend was seen after examining the various migration data sets along with the data on airstrikes. After fitting various regression models, there is a non-linear relationship between the NATO airstrikes and the surge in migrations. In addition, this relationship appears to be an inverse relationship due to the strength of the regression coefficients in the models with 2nd degree polynomials. Overall, there is evidence to argue that NATO was not solely responsible for the migrations. 
+
+
